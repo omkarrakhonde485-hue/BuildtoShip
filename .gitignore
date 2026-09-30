@@ -1,6 +1,10 @@
 node_modules/
 dist/
 .env
+.env*.local
+*.env
+client/.env
+client/.env*.local
 server/.env
 server/data/db.json
 *.log

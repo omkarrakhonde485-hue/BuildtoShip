@@ -1,27 +1,21 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
 import { 
-  Sparkles, 
   GitBranch, 
   CheckSquare, 
   ListTodo, 
-  Activity, 
   AlertTriangle, 
+  Sparkles, 
+  Activity, 
+  ArrowUpRight, 
   Clock, 
-  ShieldCheck, 
-  ChevronRight, 
-  UserCheck, 
-  Receipt, 
-  LifeBuoy, 
-  UserPlus, 
-  Calendar, 
-  TrendingUp, 
-  ArrowUpRight,
+  ChevronRight,
+  TrendingUp,
+  ShieldAlert,
   Layers,
   Zap,
   CheckCircle2
 } from 'lucide-react';
-import { DEMO_PRESETS } from './AiIntakeModal';
 
 export default function Dashboard({ onOpenIntake, onSelectWorkflow, setTab }) {
   const { 
@@ -30,348 +24,276 @@ export default function Dashboard({ onOpenIntake, onSelectWorkflow, setTab }) {
     tasks, 
     approvals, 
     monitorData, 
-    toggleTask,
-    resolveAlert
+    approveWorkflow, 
+    rejectWorkflow 
   } = useApp();
 
-  const activeWorkflows = workflows.filter(w => w.status === 'in_progress' || w.status === 'pending_approval');
   const pendingApprovals = approvals.filter(a => a.status === 'pending');
   const pendingTasks = tasks.filter(t => t.status !== 'completed');
-  const criticalAlerts = (monitorData.alerts || []).filter(a => a.status === 'active');
+  const activeAlerts = (monitorData.alerts || []).filter(a => a.status === 'active');
+  const completedWorkflows = workflows.filter(w => w.status === 'completed');
+  const activeWorkflows = workflows.filter(w => !['completed', 'rejected', 'cancelled'].includes(w.status));
+
+  // Distribution by type
+  const dist = workflows.reduce((acc, wf) => {
+    const type = wf.type || wf.workflow_type || 'approval';
+    if (!acc[type]) acc[type] = { total: 0, completed: 0, active: 0 };
+    acc[type].total++;
+    if (wf.status === 'completed') acc[type].completed++;
+    else acc[type].active++;
+    return acc;
+  }, {});
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-200">
+    <div className="space-y-8 animate-in fade-in duration-200">
       
-      {/* Top Banner: Role Context & Hero AI Trigger */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-indigo-950/80 via-slate-900 to-purple-950/80 border border-indigo-500/20 p-6 sm:p-8">
-        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-          <div className="space-y-2 max-w-2xl">
-            <div className="flex items-center gap-2">
-              <span className="text-xs px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold uppercase tracking-wider">
-                {currentUser.role} Operations View
-              </span>
-              <span className="text-xs text-slate-400 font-mono">
-                Department: {currentUser.department}
-              </span>
+      {/* Hero Welcome Banner */}
+      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-slate-800 p-6 sm:p-8">
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="space-y-2">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-semibold">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span>Central AI Engine Synchronized</span>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-              Welcome back, {currentUser.name.split(' ')[0]}
+            <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+              Welcome back, <span className="ai-gradient-text">{currentUser.name}</span>
             </h1>
-            <p className="text-sm text-slate-300 leading-relaxed">
-              NEXUS Central AI is monitoring <strong className="text-indigo-300">{activeWorkflows.length} active workflows</strong>, <strong className="text-amber-300">{pendingApprovals.length} approvals</strong>, and <strong className="text-emerald-300">{pendingTasks.length} live tasks</strong>.
+            <p className="text-xs sm:text-sm text-slate-400 max-w-xl">
+              NEXUS AI is managing company operations in real-time across Approvals, Expenses, Onboarding, IT Helpdesk, and Meeting Workflows.
             </p>
           </div>
-
           <div className="flex flex-wrap items-center gap-3">
             <button
               onClick={onOpenIntake}
-              className="flex items-center gap-2.5 px-6 py-3.5 rounded-2xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-sm shadow-xl shadow-indigo-600/30 transition active:scale-95 cursor-pointer"
+              className="flex items-center gap-2 px-5 py-3 rounded-2xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs sm:text-sm shadow-xl shadow-indigo-600/30 transition active:scale-95 cursor-pointer"
             >
               <Sparkles className="w-4 h-4 text-indigo-200" />
-              <span>Launch AI Request</span>
-              <ChevronRight className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => setTab('workflows')}
-              className="px-4 py-3.5 rounded-2xl bg-slate-800/80 hover:bg-slate-700/80 text-slate-300 font-semibold text-sm border border-slate-700 transition cursor-pointer"
-            >
-              View Workflows
+              <span>Launch AI Operations Intake</span>
             </button>
           </div>
         </div>
-
-        {/* Ambient background glow */}
-        <div className="absolute -right-12 -bottom-12 w-64 h-64 rounded-full bg-indigo-500/10 blur-3xl pointer-events-none" />
       </div>
 
-      {/* KPI Stats Grid */}
+      {/* KPI Cards Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         
         {/* Active Workflows */}
         <div 
           onClick={() => setTab('workflows')}
-          className="p-5 rounded-2xl bg-slate-900/70 border border-slate-800 hover:border-indigo-500/40 transition cursor-pointer group"
+          className="p-5 rounded-3xl bg-slate-900/80 border border-slate-800/80 hover:border-indigo-500/40 transition group cursor-pointer"
         >
-          <div className="flex items-center justify-between text-slate-400">
+          <div className="flex items-center justify-between text-slate-400 mb-3">
             <span className="text-xs font-bold uppercase tracking-wider">Active Workflows</span>
-            <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400 group-hover:bg-indigo-600 group-hover:text-white transition">
+            <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400 group-hover:bg-indigo-500/20 transition">
               <GitBranch className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-2xl sm:text-3xl font-black text-white mt-2">
-            {activeWorkflows.length}
-          </div>
-          <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
-            <span className="text-emerald-400 font-semibold">{workflows.filter(w => w.status === 'completed').length} completed</span> in total
+          <div className="text-2xl sm:text-3xl font-black text-white">{activeWorkflows.length}</div>
+          <div className="flex items-center gap-1.5 mt-2 text-[11px] text-indigo-400">
+            <span>{workflows.length} total operations</span>
+            <ChevronRight className="w-3 h-3" />
           </div>
         </div>
 
         {/* Pending Approvals */}
         <div 
           onClick={() => setTab('approvals')}
-          className="p-5 rounded-2xl bg-slate-900/70 border border-slate-800 hover:border-amber-500/40 transition cursor-pointer group"
+          className="p-5 rounded-3xl bg-slate-900/80 border border-slate-800/80 hover:border-amber-500/40 transition group cursor-pointer"
         >
-          <div className="flex items-center justify-between text-slate-400">
+          <div className="flex items-center justify-between text-slate-400 mb-3">
             <span className="text-xs font-bold uppercase tracking-wider">Pending Approvals</span>
-            <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400 group-hover:bg-amber-600 group-hover:text-white transition">
-              <UserCheck className="w-4 h-4" />
+            <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400 group-hover:bg-amber-500/20 transition">
+              <CheckSquare className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-2xl sm:text-3xl font-black text-white mt-2">
-            {pendingApprovals.length}
-          </div>
-          <div className="text-[11px] text-slate-400 mt-1">
-            Requires Manager / Finance signoff
+          <div className="text-2xl sm:text-3xl font-black text-white">{pendingApprovals.length}</div>
+          <div className="flex items-center gap-1.5 mt-2 text-[11px] text-amber-400">
+            <span>Action required</span>
+            <ChevronRight className="w-3 h-3" />
           </div>
         </div>
 
-        {/* Action Tasks */}
+        {/* Open Tasks */}
         <div 
           onClick={() => setTab('tasks')}
-          className="p-5 rounded-2xl bg-slate-900/70 border border-slate-800 hover:border-emerald-500/40 transition cursor-pointer group"
+          className="p-5 rounded-3xl bg-slate-900/80 border border-slate-800/80 hover:border-cyan-500/40 transition group cursor-pointer"
         >
-          <div className="flex items-center justify-between text-slate-400">
+          <div className="flex items-center justify-between text-slate-400 mb-3">
             <span className="text-xs font-bold uppercase tracking-wider">Open Tasks</span>
-            <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400 group-hover:bg-emerald-600 group-hover:text-white transition">
+            <div className="p-2 rounded-xl bg-cyan-500/10 text-cyan-400 group-hover:bg-cyan-500/20 transition">
               <ListTodo className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-2xl sm:text-3xl font-black text-white mt-2">
-            {pendingTasks.length}
-          </div>
-          <div className="text-[11px] text-slate-400 mt-1">
-            Assigned across team members
+          <div className="text-2xl sm:text-3xl font-black text-white">{pendingTasks.length}</div>
+          <div className="flex items-center gap-1.5 mt-2 text-[11px] text-cyan-400">
+            <span>{tasks.filter(t => t.status === 'completed').length} completed</span>
+            <ChevronRight className="w-3 h-3" />
           </div>
         </div>
 
-        {/* AI Operations Monitor Alerts */}
+        {/* Active Alerts */}
         <div 
           onClick={() => setTab('monitor')}
-          className="p-5 rounded-2xl bg-slate-900/70 border border-slate-800 hover:border-rose-500/40 transition cursor-pointer group"
+          className="p-5 rounded-3xl bg-slate-900/80 border border-slate-800/80 hover:border-rose-500/40 transition group cursor-pointer"
         >
-          <div className="flex items-center justify-between text-slate-400">
-            <span className="text-xs font-bold uppercase tracking-wider">AI Monitor Alerts</span>
-            <div className="p-2 rounded-xl bg-rose-500/10 text-rose-400 group-hover:bg-rose-600 group-hover:text-white transition">
-              <Activity className="w-4 h-4" />
+          <div className="flex items-center justify-between text-slate-400 mb-3">
+            <span className="text-xs font-bold uppercase tracking-wider">Active Alerts</span>
+            <div className="p-2 rounded-xl bg-rose-500/10 text-rose-400 group-hover:bg-rose-500/20 transition">
+              <AlertTriangle className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-2xl sm:text-3xl font-black text-white mt-2">
-            {criticalAlerts.length}
-          </div>
-          <div className="text-[11px] text-rose-400 font-semibold mt-1">
-            {criticalAlerts.length > 0 ? 'Active SLA / Risk warnings' : 'All systems normal'}
+          <div className="text-2xl sm:text-3xl font-black text-white">{activeAlerts.length}</div>
+          <div className="flex items-center gap-1.5 mt-2 text-[11px] text-rose-400">
+            <span>SLA: {monitorData.metrics?.slaComplianceRate || '98.6%'}</span>
+            <ChevronRight className="w-3 h-3" />
           </div>
         </div>
 
       </div>
 
-      {/* Quick Launch Scenario Presets Row */}
-      <div className="p-5 rounded-3xl bg-slate-900/60 border border-slate-800 space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-            <Zap className="w-4 h-4 text-amber-400" />
-            <span>1-Click Test Scenarios (Demo Presets)</span>
-          </div>
-          <span className="text-xs text-indigo-400 font-medium">Click to populate intake</span>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
-          {DEMO_PRESETS.map((preset) => {
-            const Icon = preset.icon;
-            return (
-              <button
-                key={preset.id}
-                onClick={onOpenIntake}
-                className="flex items-center gap-2.5 p-3 rounded-2xl bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 text-left transition hover:border-indigo-500/40 cursor-pointer group"
-              >
-                <div className={`p-2 rounded-xl bg-gradient-to-br ${preset.color} text-white shrink-0 group-hover:scale-105 transition`}>
-                  <Icon className="w-4 h-4" />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-bold text-slate-200 truncate">{preset.label}</div>
-                  <div className="text-[10px] text-slate-400">Launch Test</div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Main Two Column Layout */}
+      {/* Main Content Split: Workflow Distribution & Quick Approvals */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
         {/* Left 2 Cols: Active Workflows List */}
         <div className="lg:col-span-2 space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
+            <h2 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
               <Layers className="w-4 h-4 text-indigo-400" />
-              <span>Active Operations Workflows</span>
+              <span>Active Operations Pipeline</span>
             </h2>
-            <button
+            <button 
               onClick={() => setTab('workflows')}
               className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 cursor-pointer"
             >
-              <span>View all ({workflows.length})</span>
+              <span>View All</span>
               <ArrowUpRight className="w-3.5 h-3.5" />
             </button>
           </div>
 
-          <div className="space-y-3">
-            {workflows.slice(0, 4).map((wf) => {
-              const pendingApp = (wf.approvals || []).find(a => a.status === 'pending');
-              return (
-                <div
-                  key={wf.id}
-                  onClick={() => onSelectWorkflow(wf)}
-                  className="p-4 rounded-2xl bg-slate-900/80 hover:bg-slate-850 border border-slate-800 hover:border-indigo-500/40 transition cursor-pointer group space-y-3"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="space-y-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${
-                          wf.type === 'expense' ? 'bg-emerald-500/20 text-emerald-400' :
-                          wf.type === 'helpdesk' ? 'bg-rose-500/20 text-rose-400' :
-                          wf.type === 'onboarding' ? 'bg-pink-500/20 text-pink-400' :
-                          wf.type === 'meetingops' ? 'bg-blue-500/20 text-blue-400' :
-                          'bg-amber-500/20 text-amber-400'
-                        }`}>
-                          {wf.type}
-                        </span>
-                        <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${
-                          wf.priority === 'critical' ? 'bg-rose-500/20 text-rose-400' :
-                          wf.priority === 'high' ? 'bg-amber-500/20 text-amber-400' :
-                          'bg-slate-800 text-slate-400'
-                        }`}>
-                          {wf.priority}
-                        </span>
-                      </div>
-                      <h3 className="text-sm font-bold text-slate-100 group-hover:text-indigo-300 transition truncate">
-                        {wf.title}
-                      </h3>
-                      <p className="text-xs text-slate-400 line-clamp-1">
-                        Current Step: <strong className="text-slate-300">{wf.current_step}</strong> • Created by {wf.creator?.name || 'Employee'}
-                      </p>
-                    </div>
-
-                    <div className="text-right shrink-0">
-                      {wf.ai_data?.amount && (
-                        <div className="text-sm font-bold text-white font-mono">
-                          ₹{Number(wf.ai_data.amount).toLocaleString()}
-                        </div>
-                      )}
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-block mt-1 ${
-                        wf.status === 'completed' ? 'bg-emerald-500/20 text-emerald-400' :
-                        wf.status === 'rejected' ? 'bg-rose-500/20 text-rose-400' :
-                        'bg-indigo-500/20 text-indigo-300'
-                      }`}>
-                        {wf.status.replace(/_/g, ' ')}
-                      </span>
-                    </div>
+          <div className="space-y-2.5">
+            {workflows.slice(0, 5).map((wf) => (
+              <div
+                key={wf.id}
+                onClick={() => onSelectWorkflow(wf)}
+                className="p-4 rounded-2xl bg-slate-900/70 border border-slate-800 hover:border-indigo-500/40 hover:bg-slate-850/80 transition flex items-center justify-between gap-4 cursor-pointer"
+              >
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded ${
+                      wf.priority === 'critical' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' :
+                      wf.priority === 'high' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
+                      'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
+                    }`}>
+                      {wf.priority}
+                    </span>
+                    <span className="text-[11px] font-mono text-slate-400 uppercase">
+                      {(wf.type || wf.workflow_type || 'approval')}
+                    </span>
+                    <span className="text-xs text-slate-500">•</span>
+                    <span className="text-xs text-slate-400 truncate">
+                      {wf.creator?.name || 'Assigned User'}
+                    </span>
                   </div>
-
-                  {/* Visual Step Progress Dots */}
-                  <div className="flex items-center gap-1.5 pt-1 border-t border-slate-800/60">
-                    {(wf.steps || []).map((step, sIdx) => (
-                      <div
-                        key={sIdx}
-                        className={`h-1.5 rounded-full flex-1 transition-all ${
-                          step.status === 'completed' ? 'bg-emerald-500' :
-                          step.status === 'in_progress' ? 'bg-indigo-500 animate-pulse' :
-                          'bg-slate-800'
-                        }`}
-                        title={`${step.name} (${step.status})`}
-                      />
-                    ))}
+                  <div className="text-sm font-bold text-slate-100 truncate">
+                    {wf.title}
                   </div>
                 </div>
-              );
-            })}
+
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${
+                    wf.status === 'completed' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' :
+                    wf.status === 'awaiting_approval' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30' :
+                    wf.status === 'rejected' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/30' :
+                    'bg-indigo-500/10 text-indigo-400 border border-indigo-500/30'
+                  }`}>
+                    {wf.status === 'awaiting_approval' ? 'Needs Approval' : wf.status}
+                  </span>
+                  <ChevronRight className="w-4 h-4 text-slate-500" />
+                </div>
+              </div>
+            ))}
+
+            {workflows.length === 0 && (
+              <div className="text-center py-10 rounded-2xl border border-dashed border-slate-800 text-slate-500 text-xs">
+                No workflows found. Launch one via Central AI Intake!
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Right 1 Col: Live AI Operations Monitor & Approvals */}
+        {/* Right Col: Pending Approvals & Live Operations Stream */}
         <div className="space-y-6">
           
-          {/* AI Operations Radar Widget */}
-          <div className="p-5 rounded-3xl bg-slate-900/80 border border-slate-800 space-y-3">
+          {/* Quick Approvals Queue */}
+          <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <div className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping"></span>
-                <span>AI Operations Radar</span>
-              </div>
-              <button
-                onClick={() => setTab('monitor')}
-                className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold cursor-pointer"
-              >
-                Control Center
-              </button>
+              <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                <CheckSquare className="w-4 h-4 text-amber-400" />
+                <span>Pending Approvals</span>
+              </h2>
+              {pendingApprovals.length > 0 && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-bold">
+                  {pendingApprovals.length}
+                </span>
+              )}
             </div>
 
-            <div className="space-y-2.5">
-              {criticalAlerts.slice(0, 3).map((alert) => (
-                <div
-                  key={alert.id}
-                  className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/80 space-y-1.5"
+            <div className="space-y-2">
+              {pendingApprovals.slice(0, 3).map((app) => (
+                <div 
+                  key={app.id} 
+                  className="p-3.5 rounded-2xl bg-slate-900/90 border border-amber-500/30 space-y-2.5"
                 >
-                  <div className="flex items-center justify-between text-[10px]">
-                    <span className={`font-bold uppercase px-1.5 py-0.2 rounded ${
-                      alert.severity === 'critical' ? 'bg-rose-500/20 text-rose-400' :
-                      alert.severity === 'warning' ? 'bg-amber-500/20 text-amber-400' :
-                      'bg-indigo-500/20 text-indigo-300'
-                    }`}>
-                      {alert.severity}
-                    </span>
-                    <span className="text-slate-400">{new Date(alert.createdAt).toLocaleTimeString()}</span>
+                  <div className="text-xs font-bold text-slate-200 truncate">
+                    {app.workflowTitle || 'Approval Request'}
                   </div>
-                  <div className="text-xs font-semibold text-slate-200">
-                    {alert.message}
+                  <div className="text-[11px] text-slate-400 flex items-center justify-between">
+                    <span>From: {app.creator?.name || 'Team Member'}</span>
+                    <span className="text-amber-400 uppercase font-mono">{app.workflowType}</span>
                   </div>
-                  <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1">
-                    <span className="truncate">Auto-Action: {alert.suggestedAction}</span>
+                  <div className="flex items-center gap-2 pt-1">
                     <button
-                      onClick={() => resolveAlert(alert.id, 'Remediated from Dashboard')}
-                      className="text-[10px] font-bold text-indigo-400 hover:text-indigo-300 underline shrink-0 cursor-pointer"
+                      onClick={() => approveWorkflow(app.workflow_id || app.id)}
+                      className="flex-1 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition cursor-pointer"
                     >
-                      Auto-Heal
+                      Approve
+                    </button>
+                    <button
+                      onClick={() => rejectWorkflow(app.workflow_id || app.id)}
+                      className="flex-1 py-1.5 rounded-xl bg-slate-800 hover:bg-rose-950 hover:text-rose-400 text-slate-300 font-bold text-xs border border-slate-700 transition cursor-pointer"
+                    >
+                      Reject
                     </button>
                   </div>
                 </div>
               ))}
+
+              {pendingApprovals.length === 0 && (
+                <div className="p-4 rounded-2xl bg-slate-900/40 border border-slate-800/80 text-center text-xs text-slate-500">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400 mx-auto mb-1 opacity-70" />
+                  No pending approvals in your queue
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Pending Tasks Quick Checklist */}
-          <div className="p-5 rounded-3xl bg-slate-900/80 border border-slate-800 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                <ListTodo className="w-4 h-4 text-emerald-400" />
-                <span>Quick Tasks Checklist</span>
-              </div>
-              <button
-                onClick={() => setTab('tasks')}
-                className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold cursor-pointer"
-              >
-                All Tasks
-              </button>
+          {/* Workflow Types Distribution */}
+          <div className="p-4 rounded-3xl bg-slate-900/60 border border-slate-800 space-y-3">
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
+              Workflow Distribution
             </div>
-
             <div className="space-y-2">
-              {pendingTasks.slice(0, 3).map((task) => (
-                <div
-                  key={task.id}
-                  onClick={() => toggleTask(task.workflowId, task.id, task.status)}
-                  className="flex items-start gap-2.5 p-2.5 rounded-xl bg-slate-800/40 hover:bg-slate-800 border border-slate-800 text-xs transition cursor-pointer"
-                >
-                  <input
-                    type="checkbox"
-                    checked={task.status === 'completed'}
-                    onChange={() => {}}
-                    className="w-3.5 h-3.5 rounded text-indigo-600 bg-slate-900 border-slate-700 mt-0.5 cursor-pointer"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium text-slate-200 truncate">{task.title}</div>
-                    <div className="text-[10px] text-slate-400 mt-0.5">
-                      Assignee: {task.assignee} ({task.role})
-                    </div>
+              {Object.entries(dist).map(([type, stats]) => (
+                <div key={type} className="space-y-1">
+                  <div className="flex justify-between text-xs font-semibold">
+                    <span className="text-slate-300 capitalize">{type}</span>
+                    <span className="text-slate-400">{stats.completed}/{stats.total}</span>
+                  </div>
+                  <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                    <div 
+                      className="h-full bg-indigo-500 rounded-full transition-all duration-500"
+                      style={{ width: `${stats.total > 0 ? (stats.completed / stats.total) * 100 : 0}%` }}
+                    />
                   </div>
                 </div>
               ))}
