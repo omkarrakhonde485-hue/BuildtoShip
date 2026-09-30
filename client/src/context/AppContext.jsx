@@ -11,6 +11,8 @@ export const ROLES = [
   { id: 'user_adm_1', name: 'Elena Rostova', role: 'Admin', department: 'Executive Operations', title: 'Chief Operations Officer', avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80' }
 ];
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+
 const AppContext = createContext(null);
 
 export function AppProvider({ children }) {
@@ -35,10 +37,10 @@ export function AppProvider({ children }) {
     try {
       const headers = { 'X-Demo-Role': role };
       const [wfRes, tskRes, appRes, monRes] = await Promise.all([
-        fetch(`http://localhost:3001/api/workflows?role=${encodeURIComponent(role)}`, { headers }).then(r => r.json()),
-        fetch(`http://localhost:3001/api/tasks?role=${encodeURIComponent(role)}&user=${encodeURIComponent(user.name)}`, { headers }).then(r => r.json()),
-        fetch(`http://localhost:3001/api/approvals?role=${encodeURIComponent(role)}`, { headers }).then(r => r.json()),
-        fetch(`http://localhost:3001/api/monitor/events`, { headers }).then(r => r.json())
+        fetch(`${API_BASE}/api/workflows?role=${encodeURIComponent(role)}`, { headers }).then(r => r.json()),
+        fetch(`${API_BASE}/api/tasks?role=${encodeURIComponent(role)}&user=${encodeURIComponent(user.name)}`, { headers }).then(r => r.json()),
+        fetch(`${API_BASE}/api/approvals?role=${encodeURIComponent(role)}`, { headers }).then(r => r.json()),
+        fetch(`${API_BASE}/api/monitor/events`, { headers }).then(r => r.json())
       ]);
 
       if (Array.isArray(wfRes)) setWorkflows(wfRes);
@@ -86,7 +88,7 @@ export function AppProvider({ children }) {
   // AI Operations Intake Analysis
   const analyzeIntake = async (prompt) => {
     try {
-      const res = await fetch('http://localhost:3001/api/ai/intake', {
+      const res = await fetch(`${API_BASE}/api/ai/intake`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -106,7 +108,7 @@ export function AppProvider({ children }) {
   // Create workflow from AI analysis
   const createWorkflowFromAi = async (analysisResult) => {
     try {
-      const res = await fetch('http://localhost:3001/api/workflows', {
+      const res = await fetch(`${API_BASE}/api/workflows`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -132,7 +134,7 @@ export function AppProvider({ children }) {
   // Workflow Approval
   const approveWorkflow = async (workflowId, comments = 'Approved') => {
     try {
-      const res = await fetch(`http://localhost:3001/api/workflows/${workflowId}/approve`, {
+      const res = await fetch(`${API_BASE}/api/workflows/${workflowId}/approve`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -155,7 +157,7 @@ export function AppProvider({ children }) {
   // Workflow Rejection
   const rejectWorkflow = async (workflowId, comments = 'Rejected') => {
     try {
-      const res = await fetch(`http://localhost:3001/api/workflows/${workflowId}/reject`, {
+      const res = await fetch(`${API_BASE}/api/workflows/${workflowId}/reject`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -178,7 +180,7 @@ export function AppProvider({ children }) {
   // Advance workflow to next step
   const advanceWorkflow = async (workflowId) => {
     try {
-      const res = await fetch(`http://localhost:3001/api/workflows/${workflowId}/advance`, {
+      const res = await fetch(`${API_BASE}/api/workflows/${workflowId}/advance`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -200,7 +202,7 @@ export function AppProvider({ children }) {
   // Toggle Task Completion
   const toggleTask = async (taskId) => {
     try {
-      const res = await fetch(`http://localhost:3001/api/tasks/${taskId}/toggle`, {
+      const res = await fetch(`${API_BASE}/api/tasks/${taskId}/toggle`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -222,7 +224,7 @@ export function AppProvider({ children }) {
   // Make.com Webhook trigger
   const triggerMakeAutomation = async () => {
     try {
-      const res = await fetch('http://localhost:3001/api/integrations/make-webhook', {
+      const res = await fetch(`${API_BASE}/api/integrations/make-webhook`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -244,7 +246,7 @@ export function AppProvider({ children }) {
   const resetDemoData = async () => {
     try {
       setLoading(true);
-      const res = await fetch('http://localhost:3001/api/demo/reset', { method: 'POST' });
+      const res = await fetch(`${API_BASE}/api/demo/reset`, { method: 'POST' });
       const data = await res.json();
       showToast(data.message || 'Database reset to initial demo state', 'info');
       await loadAllData();

@@ -5,17 +5,12 @@ const apiRoutes = require('./routes/api');
 
 const app = express();
 
-// CORS — allow frontend origins
+// CORS — allow all local frontend origins and headers
 app.use(cors({
-  origin: [
-    env.FRONTEND_URL,
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-    'http://localhost:5174'
-  ].filter(Boolean),
+  origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Demo-Role', 'x-demo-role']
 }));
 
 app.use(express.json({ limit: '2mb' }));

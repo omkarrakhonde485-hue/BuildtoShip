@@ -17,6 +17,8 @@ import {
   HardDrive
 } from 'lucide-react';
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+
 export default function AiAssistant({ onViewWorkflow }) {
   const { showToast, loadAllData, currentUser } = useApp();
   const [messages, setMessages] = useState([
@@ -44,7 +46,7 @@ export default function AiAssistant({ onViewWorkflow }) {
     setMessages(prev => [...prev, { role: 'user', text: msg }]);
 
     try {
-      const res = await fetch('http://localhost:3001/api/ai/agent', {
+      const res = await fetch(`${API_BASE}/api/ai/agent`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
