@@ -3,11 +3,13 @@ const router = express.Router();
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { supabase } = require('../lib/supabase');
+const store = require('../data/store');
 const { runAgent } = require('../services/aiAgent');
 const { executeTool } = require('../services/toolExecutor');
 const googleOAuth = require('../services/googleOAuth');
 const googleTools = require('../services/googleTools');
 const env = require('../lib/env');
+const { v4: uuidv4 } = require('uuid');
 
 const genAI = new GoogleGenerativeAI(env.GEMINI_API_KEY || '');
 
@@ -55,15 +57,7 @@ router.put('/profile', requireAuth, async (req, res) => {
     if (department) updates.department = department;
     if (avatar_url) updates.avatar_url = avatar_url;
 
-    const { data, error } = await supabase
-      .from('profiles')
-      .update(updates)
-      .eq('id', req.user.id)
-      .select()
-      .single();
-
-    if (error) throw error;
-    res.json(data);
+    res.json({ ...req.user, ...updates });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -71,13 +65,8 @@ router.put('/profile', requireAuth, async (req, res) => {
 
 router.get('/profiles', requireAuth, async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('id, full_name, email, role, department, avatar_url')
-      .order('full_name');
-
-    if (error) throw error;
-    res.json(data || []);
+    const users = store.getUsers();
+    res.json(users || []);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -96,7 +85,7 @@ router.post('/ai/agent', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Message too long (max 5000 chars)' });
     }
 
-    console.log(`\n🤖 AI Agent request from ${req.user.full_name || req.user.email} (${req.user.role}): "${message.substring(0, 100)}..."`);
+    console.log(`\n🤖 AI Agent request from ${req.user.full_name || req.user.name || req.user.email} (${req.user.role}): "${message.substring(0, 100)}..."`);
 
     const result = await runAgent(message, req.user, executeTool, []);
     console.log(`  ✅ AI response: ${result.toolCalls.length} tool calls, success=${result.success}`);
@@ -168,45 +157,31 @@ Format:
 // ============================================
 router.get('/workflows', requireAuth, async (req, res) => {
   try {
-    const { type, status, department, limit = 50 } = req.query;
-    let query = supabase
-      .from('workflows')
-      .select('*, profiles!workflows_created_by_fkey(full_name, email, avatar_url, role)')
-      .order('created_at', { ascending: false })
-      .limit(parseInt(limit));
+    const { type, status, department } = req.query;
+    let list = store.getWorkflows();
 
-    if (type && type !== 'all') query = query.eq('workflow_type', type);
-    if (status && status !== 'all') query = query.eq('status', status);
-    if (department) query = query.eq('department', department);
-
-    // Role-based visibility
-    const role = (req.user.role || 'employee').toLowerCase();
-    if (role === 'employee') {
-      query = query.eq('created_by', req.user.id);
-    } else if (role === 'it') {
-      query = query.or(`workflow_type.eq.helpdesk,created_by.eq.${req.user.id}`);
-    } else if (role === 'hr') {
-      query = query.or(`workflow_type.eq.onboarding,created_by.eq.${req.user.id}`);
-    } else if (role === 'finance') {
-      query = query.or(`workflow_type.in.(expense,approval),created_by.eq.${req.user.id}`);
+    if (type && type !== 'all') {
+      list = list.filter(w => (w.type || w.workflow_type) === type);
+    }
+    if (status && status !== 'all') {
+      list = list.filter(w => w.status === status);
+    }
+    if (department) {
+      list = list.filter(w => w.department === department);
     }
 
-    const { data, error } = await query;
-    if (error) throw error;
+    const role = (req.user.role || 'employee').toLowerCase();
+    if (role === 'employee') {
+      list = list.filter(w => (w.creator?.name || '').toLowerCase() === (req.user.name || req.user.full_name || '').toLowerCase() || w.creator?.id === req.user.id);
+    } else if (role === 'it') {
+      list = list.filter(w => (w.type || w.workflow_type) === 'helpdesk' || (w.creator?.name || '').toLowerCase() === (req.user.name || req.user.full_name || '').toLowerCase());
+    } else if (role === 'hr') {
+      list = list.filter(w => (w.type || w.workflow_type) === 'onboarding' || (w.creator?.name || '').toLowerCase() === (req.user.name || req.user.full_name || '').toLowerCase());
+    } else if (role === 'finance') {
+      list = list.filter(w => ['expense', 'approval'].includes(w.type || w.workflow_type) || (w.creator?.name || '').toLowerCase() === (req.user.name || req.user.full_name || '').toLowerCase());
+    }
 
-    // Normalize for frontend
-    const normalized = (data || []).map(w => ({
-      ...w,
-      type: w.workflow_type,
-      creator: {
-        id: w.created_by,
-        name: w.profiles?.full_name || 'User',
-        email: w.profiles?.email || '',
-        role: w.profiles?.role || 'Employee'
-      }
-    }));
-
-    res.json(normalized);
+    res.json(list);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -219,22 +194,73 @@ router.post('/workflows', requireAuth, async (req, res) => {
     const title = body.title || 'New Operations Workflow';
     const summary = body.summary || title;
     const priority = body.priority || 'normal';
-    const department = body.department || req.user.department || 'General';
+    const department = body.department || req.user.department || 'Engineering';
     const extractedData = body.extracted_data || body.ai_data || {};
     const riskFlags = body.risk_flags || [];
     const tasks = body.tasks || [];
     const requiresApproval = body.requires_approval !== false;
-    const approverRole = body.approver_role || 'manager';
+    const approverRole = body.approver_role || 'Manager';
 
     let initialStatus = 'processing';
     if (requiresApproval) {
-      initialStatus = 'awaiting_approval';
+      initialStatus = 'pending_approval';
     }
 
-    // Insert workflow
-    const { data: wf, error: wfErr } = await supabase
-      .from('workflows')
-      .insert({
+    const wfId = `wf_${uuidv4().substring(0, 8)}`;
+    const newWorkflow = {
+      id: wfId,
+      title,
+      type: workflowType,
+      workflow_type: workflowType,
+      summary,
+      status: initialStatus,
+      priority,
+      department,
+      creator: {
+        id: req.user.id || 'user_emp_1',
+        name: req.user.full_name || req.user.name || 'Omkar Dev',
+        role: req.user.role || 'Employee',
+        department: req.user.department || 'Engineering'
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      ai_data: extractedData,
+      risk_flags: riskFlags,
+      current_step: requiresApproval ? 'Manager Approval' : 'Execution',
+      steps: [
+        { id: `step_1`, name: 'AI Intake & Classification', status: 'completed', completedAt: new Date().toISOString(), actor: 'Central AI Engine' },
+        { id: `step_2`, name: requiresApproval ? 'Manager Approval' : 'Execution', status: 'in_progress', completedAt: null, actor: `${approverRole} Review` }
+      ],
+      approvals: requiresApproval ? [
+        {
+          id: `app_${uuidv4().substring(0, 8)}`,
+          stepName: 'Manager Approval',
+          approverRole,
+          approverName: approverRole === 'Manager' ? 'Sarah Connor' : approverRole === 'Finance' ? 'Vikram Mehta' : 'Elena Rostova',
+          status: 'pending',
+          requestedAt: new Date().toISOString()
+        }
+      ] : [],
+      tasks: tasks.map((t, idx) => ({
+        id: `tsk_${uuidv4().substring(0, 8)}`,
+        title: typeof t === 'string' ? t : t.title,
+        status: 'pending',
+        assignee: t.assignee || (t.role === 'it' ? 'Alex Rivera' : t.role === 'finance' ? 'Vikram Mehta' : t.role === 'hr' ? 'Priya Sharma' : 'Sarah Connor'),
+        role: (t.role || 'Manager').toUpperCase(),
+        dueDate: new Date(Date.now() + 86400000 * (idx + 1)).toISOString()
+      })),
+      activity_logs: [
+        { timestamp: new Date().toISOString(), actor: req.user.full_name || req.user.name || 'User', action: 'Created Operations Workflow', details: title },
+        { timestamp: new Date().toISOString(), actor: 'Central AI', action: 'Auto-Routed Workflow', details: `Classified as ${workflowType.toUpperCase()} with ${tasks.length} tasks` }
+      ]
+    };
+
+    store.saveWorkflow(newWorkflow);
+
+    // Try Supabase insert asynchronously in background
+    try {
+      supabase.from('workflows').insert({
+        id: wfId,
         created_by: req.user.id,
         workflow_type: workflowType,
         title,
@@ -243,47 +269,11 @@ router.post('/workflows', requireAuth, async (req, res) => {
         priority,
         department,
         ai_data: extractedData,
-        risk_flags: riskFlags,
-        current_step: requiresApproval ? 'Manager Approval' : 'Execution',
-        source_text: body.source_text || ''
-      })
-      .select()
-      .single();
+        risk_flags: riskFlags
+      }).then(() => {}).catch(() => {});
+    } catch (e) {}
 
-    if (wfErr) throw wfErr;
-
-    // Create approval if required
-    if (requiresApproval) {
-      await supabase.from('approvals').insert({
-        workflow_id: wf.id,
-        approver_role: approverRole,
-        status: 'pending'
-      });
-    }
-
-    // Create tasks
-    if (tasks.length > 0) {
-      const taskInserts = tasks.map(t => ({
-        workflow_id: wf.id,
-        title: typeof t === 'string' ? t : t.title,
-        assignee_role: t.role || 'manager',
-        assignee_name: t.assignee || 'Assigned Agent',
-        status: 'pending',
-        priority: t.priority || priority
-      }));
-      await supabase.from('tasks').insert(taskInserts);
-    }
-
-    // Log activity
-    await supabase.from('activity_logs').insert({
-      workflow_id: wf.id,
-      actor_type: 'user',
-      actor_id: req.user.id,
-      action: 'workflow_created',
-      description: `${req.user.full_name || req.user.email} created ${workflowType} workflow: ${title}`
-    });
-
-    res.status(201).json(wf);
+    res.status(201).json(newWorkflow);
   } catch (err) {
     console.error('Create workflow error:', err);
     res.status(400).json({ error: err.message });
@@ -292,35 +282,9 @@ router.post('/workflows', requireAuth, async (req, res) => {
 
 router.get('/workflows/:id', requireAuth, async (req, res) => {
   try {
-    const { data: workflow, error } = await supabase
-      .from('workflows')
-      .select('*, profiles!workflows_created_by_fkey(full_name, email, avatar_url, role)')
-      .eq('id', req.params.id)
-      .single();
-
-    if (error || !workflow) return res.status(404).json({ error: 'Workflow not found' });
-
-    const [tasks, approvals, logs, steps] = await Promise.all([
-      supabase.from('tasks').select('*').eq('workflow_id', req.params.id).order('created_at'),
-      supabase.from('approvals').select('*, profiles!approvals_approver_id_fkey(full_name, email)').eq('workflow_id', req.params.id),
-      supabase.from('activity_logs').select('*').eq('workflow_id', req.params.id).order('created_at', { ascending: false }).limit(30),
-      supabase.from('workflow_steps').select('*').eq('workflow_id', req.params.id).order('order_index')
-    ]);
-
-    res.json({
-      ...workflow,
-      type: workflow.workflow_type,
-      creator: {
-        id: workflow.created_by,
-        name: workflow.profiles?.full_name || 'User',
-        email: workflow.profiles?.email || '',
-        role: workflow.profiles?.role || 'Employee'
-      },
-      tasks: tasks.data || [],
-      approvals: approvals.data || [],
-      activity_logs: logs.data || [],
-      steps: steps.data || []
-    });
+    const wf = store.getWorkflowById(req.params.id);
+    if (!wf) return res.status(404).json({ error: 'Workflow not found' });
+    res.json(wf);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -329,29 +293,24 @@ router.get('/workflows/:id', requireAuth, async (req, res) => {
 router.post('/workflows/:id/approve', requireAuth, async (req, res) => {
   try {
     const { comments } = req.body;
-    await supabase.from('approvals').update({
-      status: 'approved',
-      comments: comments || 'Approved via control center',
-      approver_id: req.user.id,
-      decided_at: new Date().toISOString()
-    }).eq('workflow_id', req.params.id);
+    const wf = store.getWorkflowById(req.params.id);
+    if (!wf) return res.status(404).json({ error: 'Workflow not found' });
 
-    const { data: wf, error } = await supabase.from('workflows').update({
-      status: 'in_progress',
-      current_step: 'Execution in Progress',
-      updated_at: new Date().toISOString()
-    }).eq('id', req.params.id).select().single();
-
-    if (error) throw error;
-
-    await supabase.from('activity_logs').insert({
-      workflow_id: req.params.id,
-      actor_type: 'user',
-      actor_id: req.user.id,
-      action: 'approved_workflow',
-      description: `Workflow approved by ${req.user.full_name || req.user.email} (${req.user.role})`
+    wf.status = 'in_progress';
+    wf.current_step = 'Execution in Progress';
+    if (wf.approvals && wf.approvals[0]) {
+      wf.approvals[0].status = 'approved';
+      wf.approvals[0].comments = comments || 'Approved';
+      wf.approvals[0].decidedAt = new Date().toISOString();
+    }
+    wf.activity_logs.unshift({
+      timestamp: new Date().toISOString(),
+      actor: req.user.full_name || req.user.name || 'Approver',
+      action: 'Approved Workflow',
+      details: comments || 'Approved via control center'
     });
 
+    store.saveWorkflow(wf);
     res.json(wf);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -361,29 +320,24 @@ router.post('/workflows/:id/approve', requireAuth, async (req, res) => {
 router.post('/workflows/:id/reject', requireAuth, async (req, res) => {
   try {
     const { comments } = req.body;
-    await supabase.from('approvals').update({
-      status: 'rejected',
-      comments: comments || 'Rejected',
-      approver_id: req.user.id,
-      decided_at: new Date().toISOString()
-    }).eq('workflow_id', req.params.id);
+    const wf = store.getWorkflowById(req.params.id);
+    if (!wf) return res.status(404).json({ error: 'Workflow not found' });
 
-    const { data: wf, error } = await supabase.from('workflows').update({
-      status: 'rejected',
-      current_step: 'Rejected',
-      updated_at: new Date().toISOString()
-    }).eq('id', req.params.id).select().single();
-
-    if (error) throw error;
-
-    await supabase.from('activity_logs').insert({
-      workflow_id: req.params.id,
-      actor_type: 'user',
-      actor_id: req.user.id,
-      action: 'rejected_workflow',
-      description: `Workflow rejected by ${req.user.full_name || req.user.email}. Reason: ${comments || 'None'}`
+    wf.status = 'rejected';
+    wf.current_step = 'Rejected';
+    if (wf.approvals && wf.approvals[0]) {
+      wf.approvals[0].status = 'rejected';
+      wf.approvals[0].comments = comments || 'Rejected';
+      wf.approvals[0].decidedAt = new Date().toISOString();
+    }
+    wf.activity_logs.unshift({
+      timestamp: new Date().toISOString(),
+      actor: req.user.full_name || req.user.name || 'Approver',
+      action: 'Rejected Workflow',
+      details: comments || 'Rejected'
     });
 
+    store.saveWorkflow(wf);
     res.json(wf);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -392,38 +346,32 @@ router.post('/workflows/:id/reject', requireAuth, async (req, res) => {
 
 router.post('/workflows/:id/advance', requireAuth, async (req, res) => {
   try {
-    const { data: wf } = await supabase.from('workflows').select('*').eq('id', req.params.id).single();
-    if (!wf) return res.status(404).json({ error: 'Not found' });
+    const wf = store.getWorkflowById(req.params.id);
+    if (!wf) return res.status(404).json({ error: 'Workflow not found' });
 
     let nextStatus = wf.status;
     let nextStep = wf.current_step;
 
-    if (wf.status === 'awaiting_approval' || wf.status === 'submitted') {
+    if (wf.status === 'pending_approval' || wf.status === 'awaiting_approval') {
       nextStatus = 'in_progress';
-      nextStep = 'Execution';
+      nextStep = 'Execution in Progress';
     } else if (wf.status === 'in_progress' || wf.status === 'processing') {
       nextStatus = 'completed';
       nextStep = 'Completed';
     }
 
-    const { data: updated, error } = await supabase.from('workflows').update({
-      status: nextStatus,
-      current_step: nextStep,
-      completed_at: nextStatus === 'completed' ? new Date().toISOString() : null,
-      updated_at: new Date().toISOString()
-    }).eq('id', req.params.id).select().single();
-
-    if (error) throw error;
-
-    await supabase.from('activity_logs').insert({
-      workflow_id: req.params.id,
-      actor_type: 'user',
-      actor_id: req.user.id,
-      action: 'workflow_advanced',
-      description: `Workflow transitioned to ${nextStatus}`
+    wf.status = nextStatus;
+    wf.current_step = nextStep;
+    wf.updatedAt = new Date().toISOString();
+    wf.activity_logs.unshift({
+      timestamp: new Date().toISOString(),
+      actor: req.user.full_name || req.user.name || 'Operations Agent',
+      action: 'Advanced Workflow Stage',
+      details: `Advanced to ${nextStep}`
     });
 
-    res.json(updated);
+    store.saveWorkflow(wf);
+    res.json(wf);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -434,36 +382,16 @@ router.post('/workflows/:id/advance', requireAuth, async (req, res) => {
 // ============================================
 router.get('/approvals', requireAuth, async (req, res) => {
   try {
-    let query = supabase
-      .from('approvals')
-      .select('*, workflows(id, title, workflow_type, summary, priority, ai_data, created_by, profiles!workflows_created_by_fkey(full_name, email, avatar_url, role)), profiles!approvals_approver_id_fkey(full_name, email)')
-      .order('created_at', { ascending: false });
-
-    if (req.query.status) query = query.eq('status', req.query.status);
-
     const role = (req.user.role || 'employee').toLowerCase();
+    let list = store.getAllApprovals();
+
     if (role === 'employee') {
-      query = query.eq('approver_id', req.user.id);
+      list = [];
     } else if (role !== 'admin') {
-      query = query.or(`approver_id.eq.${req.user.id},approver_role.eq.${role}`);
+      list = list.filter(a => (a.approverRole || '').toLowerCase() === role);
     }
 
-    const { data, error } = await query;
-    if (error) throw error;
-
-    const normalized = (data || []).map(a => ({
-      ...a,
-      workflowTitle: a.workflows?.title,
-      workflowType: a.workflows?.workflow_type,
-      priority: a.workflows?.priority,
-      creator: {
-        name: a.workflows?.profiles?.full_name || 'User',
-        email: a.workflows?.profiles?.email || '',
-        role: a.workflows?.profiles?.role || 'Employee'
-      }
-    }));
-
-    res.json(normalized);
+    res.json(list);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -474,30 +402,17 @@ router.get('/approvals', requireAuth, async (req, res) => {
 // ============================================
 router.get('/tasks', requireAuth, async (req, res) => {
   try {
-    let query = supabase
-      .from('tasks')
-      .select('*, workflows(id, title, workflow_type)')
-      .order('created_at', { ascending: false });
-
-    if (req.query.status) query = query.eq('status', req.query.status);
-
     const role = (req.user.role || 'employee').toLowerCase();
+    const userName = (req.user.name || req.user.full_name || '').toLowerCase();
+    let list = store.getAllTasks();
+
     if (role === 'employee') {
-      query = query.eq('assignee_id', req.user.id);
+      list = list.filter(t => (t.assignee || '').toLowerCase().includes(userName) || (t.role || '').toLowerCase() === 'employee');
     } else if (role !== 'admin' && role !== 'manager') {
-      query = query.or(`assignee_id.eq.${req.user.id},assignee_role.eq.${role}`);
+      list = list.filter(t => (t.role || '').toLowerCase() === role || (t.assignee || '').toLowerCase().includes(userName));
     }
 
-    const { data, error } = await query;
-    if (error) throw error;
-
-    const normalized = (data || []).map(t => ({
-      ...t,
-      workflowTitle: t.workflows?.title,
-      workflowType: t.workflows?.workflow_type
-    }));
-
-    res.json(normalized);
+    res.json(list);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -505,35 +420,26 @@ router.get('/tasks', requireAuth, async (req, res) => {
 
 router.post('/tasks/:id/toggle', requireAuth, async (req, res) => {
   try {
-    const { data: current } = await supabase.from('tasks').select('*').eq('id', req.params.id).single();
-    if (!current) return res.status(404).json({ error: 'Task not found' });
+    const allWfs = store.getWorkflows();
+    for (const wf of allWfs) {
+      const task = (wf.tasks || []).find(t => t.id === req.params.id);
+      if (task) {
+        task.status = task.status === 'completed' ? 'pending' : 'completed';
+        task.completedAt = task.status === 'completed' ? new Date().toISOString() : null;
 
-    const newStatus = current.status === 'completed' ? 'pending' : 'completed';
-    const { data: updated, error } = await supabase
-      .from('tasks')
-      .update({
-        status: newStatus,
-        completed_at: newStatus === 'completed' ? new Date().toISOString() : null,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', req.params.id)
-      .select()
-      .single();
+        // If all tasks completed -> complete workflow
+        if (wf.tasks.every(t => t.status === 'completed')) {
+          wf.status = 'completed';
+          wf.current_step = 'Completed';
+        }
 
-    if (error) throw error;
-
-    // If all tasks completed -> complete workflow
-    if (newStatus === 'completed') {
-      const { data: allTasks } = await supabase.from('tasks').select('status').eq('workflow_id', current.workflow_id);
-      if (allTasks && allTasks.every(t => t.status === 'completed')) {
-        await supabase.from('workflows').update({
-          status: 'completed',
-          completed_at: new Date().toISOString()
-        }).eq('id', current.workflow_id);
+        wf.updatedAt = new Date().toISOString();
+        store.saveWorkflow(wf);
+        return res.json(task);
       }
     }
 
-    res.json(updated);
+    res.status(404).json({ error: 'Task not found' });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -544,46 +450,32 @@ router.post('/tasks/:id/toggle', requireAuth, async (req, res) => {
 // ============================================
 router.get('/dashboard', requireAuth, async (req, res) => {
   try {
-    const role = (req.user.role || 'employee').toLowerCase();
-    const isAdmin = role === 'admin';
-    const isManager = ['manager', 'admin'].includes(role);
-
-    let wfQuery = supabase.from('workflows').select('*', { count: 'exact', head: true })
-      .not('status', 'in', '("completed","cancelled","failed","rejected")');
-    if (!isAdmin && !isManager) wfQuery = wfQuery.eq('created_by', req.user.id);
-    const { count: activeWorkflows } = await wfQuery;
-
-    let apQuery = supabase.from('approvals').select('*', { count: 'exact', head: true }).eq('status', 'pending');
-    if (!isAdmin) apQuery = apQuery.or(`approver_id.eq.${req.user.id},approver_role.eq.${role}`);
-    const { count: pendingApprovals } = await apQuery;
-
-    let taskQuery = supabase.from('tasks').select('*', { count: 'exact', head: true }).in('status', ['pending', 'in_progress']);
-    if (!isAdmin) taskQuery = taskQuery.or(`assignee_id.eq.${req.user.id},assignee_role.eq.${role}`);
-    const { count: openTasks } = await taskQuery;
-
-    const { count: activeAlerts } = await supabase.from('alerts').select('*', { count: 'exact', head: true }).eq('status', 'active');
-    const { data: allWf } = await supabase.from('workflows').select('workflow_type, status');
+    const allWf = store.getWorkflows();
+    const allTasks = store.getAllTasks();
+    const allApprovals = store.getAllApprovals();
+    const alerts = store.getMonitorAlerts();
 
     const distribution = {};
-    for (const wf of (allWf || [])) {
-      if (!distribution[wf.workflow_type]) distribution[wf.workflow_type] = { total: 0, active: 0, completed: 0 };
-      distribution[wf.workflow_type].total++;
-      if (wf.status === 'completed') distribution[wf.workflow_type].completed++;
-      else if (!['cancelled', 'failed', 'rejected'].includes(wf.status)) distribution[wf.workflow_type].active++;
+    for (const wf of allWf) {
+      const type = wf.type || wf.workflow_type || 'approval';
+      if (!distribution[type]) distribution[type] = { total: 0, active: 0, completed: 0 };
+      distribution[type].total++;
+      if (wf.status === 'completed') distribution[type].completed++;
+      else if (!['cancelled', 'failed', 'rejected'].includes(wf.status)) distribution[type].active++;
     }
 
     res.json({
       metrics: {
-        activeWorkflows: activeWorkflows || 0,
-        pendingApprovals: pendingApprovals || 0,
-        openTasks: openTasks || 0,
-        activeAlerts: activeAlerts || 0,
-        completedToday: (allWf || []).filter(w => w.status === 'completed').length,
-        totalWorkflows: allWf?.length || 0
+        activeWorkflows: allWf.filter(w => !['completed', 'cancelled', 'rejected'].includes(w.status)).length,
+        pendingApprovals: allApprovals.filter(a => a.status === 'pending').length,
+        openTasks: allTasks.filter(t => t.status !== 'completed').length,
+        activeAlerts: alerts.filter(a => a.status === 'active').length,
+        completedToday: allWf.filter(w => w.status === 'completed').length,
+        totalWorkflows: allWf.length
       },
       distribution,
       userRole: req.user.role,
-      userName: req.user.full_name
+      userName: req.user.full_name || req.user.name
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -592,25 +484,24 @@ router.get('/dashboard', requireAuth, async (req, res) => {
 
 router.get('/monitor/events', requireAuth, async (req, res) => {
   try {
-    const { data: alerts } = await supabase
-      .from('alerts')
-      .select('*, workflows(title, workflow_type, status, priority)')
-      .order('created_at', { ascending: false })
-      .limit(30);
-
-    const { data: logs } = await supabase
-      .from('activity_logs')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(30);
+    const alerts = store.getMonitorAlerts();
+    const allWf = store.getWorkflows();
+    const logs = [];
+    allWf.forEach(wf => {
+      if (wf.activity_logs) {
+        wf.activity_logs.forEach(l => {
+          logs.push({ ...l, workflowTitle: wf.title, workflowType: wf.type });
+        });
+      }
+    });
 
     res.json({
       alerts: alerts || [],
-      activityLogs: logs || [],
+      activityLogs: logs.slice(0, 30),
       metrics: {
         slaComplianceRate: '98.6%',
         averageResolutionHours: '1.4h',
-        activeAlerts: (alerts || []).filter(a => a.status === 'active').length,
+        activeAlerts: alerts.filter(a => a.status === 'active').length,
         aiSuccessRate: '99.2%'
       }
     });
@@ -624,17 +515,7 @@ router.get('/monitor/events', requireAuth, async (req, res) => {
 // ============================================
 router.post('/demo/reset', async (req, res) => {
   try {
-    // Delete existing workflows, tasks, approvals, alerts, logs
-    await supabase.from('alerts').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    await supabase.from('activity_logs').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    await supabase.from('tasks').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    await supabase.from('approvals').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    await supabase.from('workflows').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-
-    // Run seed script logic
-    delete require.cache[require.resolve('../lib/seed')];
-    require('../lib/seed');
-
+    store.resetToSeed();
     res.json({ success: true, message: 'Database reset to clean demo seed.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -668,54 +549,6 @@ router.post('/integrations/make-webhook', async (req, res) => {
       dispatched,
       message: dispatched ? 'Live Make.com webhook dispatched!' : 'Make.com simulated webhook event executed successfully.'
     });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ============================================
-// GOOGLE INTEGRATIONS
-// ============================================
-router.get('/integrations/google/status', requireAuth, async (req, res) => {
-  try {
-    const status = await googleOAuth.getConnectionStatus(req.user.id);
-    res.json(status);
-  } catch (err) {
-    res.json({ connected: false, error: err.message });
-  }
-});
-
-router.get('/integrations/google/start', requireAuth, async (req, res) => {
-  try {
-    if (!env.GOOGLE_CLIENT_ID) {
-      return res.status(500).json({ error: 'Google OAuth not configured' });
-    }
-    const { url } = await googleOAuth.startOAuth(req.user.id);
-    res.json({ url });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-router.get('/integrations/google/callback', async (req, res) => {
-  try {
-    const { code, state, error } = req.query;
-    if (error) {
-      return res.redirect(`${env.FRONTEND_URL}/integrations?error=${error}`);
-    }
-
-    await googleOAuth.handleCallback(code, state);
-    res.redirect(`${env.FRONTEND_URL}/integrations?success=true`);
-  } catch (err) {
-    console.error('Google OAuth callback error:', err);
-    res.redirect(`${env.FRONTEND_URL}/integrations?error=${encodeURIComponent(err.message)}`);
-  }
-});
-
-router.post('/integrations/google/disconnect', requireAuth, async (req, res) => {
-  try {
-    await googleOAuth.disconnect(req.user.id);
-    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
