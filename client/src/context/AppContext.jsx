@@ -200,14 +200,16 @@ export function AppProvider({ children }) {
   };
 
   // Toggle Task Completion
-  const toggleTask = async (taskId) => {
+  const toggleTask = async (arg1, arg2) => {
     try {
+      const taskId = (arg2 && typeof arg2 === 'string') ? arg2 : arg1;
       const res = await fetch(`${API_BASE}/api/tasks/${taskId}/toggle`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Demo-Role': currentUser.role
-        }
+        },
+        body: JSON.stringify({ workflowId: arg2 ? arg1 : undefined, taskId })
       });
       const updated = await res.json();
       if (!res.ok) throw new Error(updated.error || 'Task toggle failed');

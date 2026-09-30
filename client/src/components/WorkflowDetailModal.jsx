@@ -296,7 +296,7 @@ export default function WorkflowDetailModal({ workflow, onClose }) {
                   return (
                     <div
                       key={task.id}
-                      onClick={() => toggleTask(workflow.id, task.id, task.status)}
+                      onClick={() => toggleTask(task.id)}
                       className={`flex items-center justify-between p-3 rounded-xl border text-xs transition cursor-pointer ${
                         isDone 
                           ? 'bg-slate-900/40 border-slate-800/60 opacity-60' 

@@ -420,9 +420,12 @@ router.get('/tasks', requireAuth, async (req, res) => {
 
 router.post('/tasks/:id/toggle', requireAuth, async (req, res) => {
   try {
+    const targetId = req.body?.taskId || req.params.id;
     const allWfs = store.getWorkflows();
+
+    // 1. Try finding by task ID across all workflows
     for (const wf of allWfs) {
-      const task = (wf.tasks || []).find(t => t.id === req.params.id);
+      const task = (wf.tasks || []).find(t => t.id === targetId || t.id === req.params.id);
       if (task) {
         task.status = task.status === 'completed' ? 'pending' : 'completed';
         task.completedAt = task.status === 'completed' ? new Date().toISOString() : null;
@@ -437,6 +440,17 @@ router.post('/tasks/:id/toggle', requireAuth, async (req, res) => {
         store.saveWorkflow(wf);
         return res.json(task);
       }
+    }
+
+    // 2. If param is a workflow ID, toggle first pending task
+    const wfMatch = allWfs.find(w => w.id === req.params.id);
+    if (wfMatch && wfMatch.tasks && wfMatch.tasks.length > 0) {
+      const task = wfMatch.tasks.find(t => t.status !== 'completed') || wfMatch.tasks[0];
+      task.status = task.status === 'completed' ? 'pending' : 'completed';
+      task.completedAt = task.status === 'completed' ? new Date().toISOString() : null;
+      wfMatch.updatedAt = new Date().toISOString();
+      store.saveWorkflow(wfMatch);
+      return res.json(task);
     }
 
     res.status(404).json({ error: 'Task not found' });

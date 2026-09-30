@@ -129,7 +129,7 @@ export default function TasksView({ onSelectWorkflow }) {
               >
                 <div className="flex items-start gap-3.5 flex-1 min-w-0">
                   <button
-                    onClick={() => toggleTask(task.workflowId, task.id, task.status)}
+                    onClick={() => toggleTask(task.id)}
                     className={`w-5 h-5 rounded-lg flex items-center justify-center border transition mt-0.5 cursor-pointer shrink-0 ${
                       isDone 
                         ? 'bg-emerald-500 border-emerald-400 text-slate-950' 
